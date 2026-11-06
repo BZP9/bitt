@@ -1,0 +1,278 @@
+# run — a recipe over data, in a cycle (foundation.md §C1). One act for every module kind: the recipe's module says its kind, and the
+# kind decides the mechanics (the ladder, gates, smoke-first, the job) and the guards (the `when: kind …` rows below).
+tool: run
+cards:
+
+  - id: run.go
+    kind: maneuver
+    kind_of: recipe                      # the module kind of `recipe` is `kind` in every `when:` below and picks `open_in_by_kind`
+    open_in: [GOAL, WORK, JUDGE, EXPLORE]
+    open_in_by_kind:
+      derive: [GOAL, WORK, EXPLORE]
+      check: [GOAL, WORK, JUDGE, EXPLORE]
+      generate: [WORK, JUDGE, EXPLORE]
+      train: [WORK, EXPLORE]
+      pipeline: [WORK, JUDGE, EXPLORE]
+      join: [GOAL, WORK, EXPLORE]
+      union: [GOAL, WORK, EXPLORE]
+    extends: base.write
+    summary: >-
+      run a recipe over its input. A row module (derive, generate): a ladder climbed by itself, the smoke rung (1 row) then the
+      sample (the recipe's sample_rows, default 10), where one call stops; again for all (`full`: the smoke rung, then all; a warning
+      when the sample was never looked at); a check runs on all at once. Each row made once per what it read (rows already made are reused), into its output contract's table; a failed row
+      is a failed run. Every run counts per unit: its entries follow the units it started from, and a row reads its bound columns
+      along its own unit's chain. A table derive: its rows (or, a select, a set: `as` dataset / evalset on a `line`). A check: per-row
+      verdicts only. An aggregate (a module across rows): exactly one row of what it declares, keyed by the input set. A train: in a
+      named env, in the background, the first run a smoke run; its model (an artifact) lands when the job finishes, its reported
+      numbers as rows of its report table. A join (docs/v2/inputs.md): each unit's row looked up by key in the `read` inputs,
+      in full (it calls nothing), the units kept, every row read linked. A union: every row of `on` and the `read` inputs once per
+      key, linked to every source row (new units). A table derive may name inputs (rows: list, chat: list): its `read` roles.
+    in:
+      min:
+        recipe: {ref: [recipe]}
+      opt:
+        "on": {ref: [raw, selection, dataset, evalset, run], many: true}   # a run = the rows it made or reused (quoted: YAML reads on as true)
+        read: {ref_map: [raw, selection, dataset, evalset, run]}          # the other inputs by role (a join's lookups): `on` stays the units
+        full: {type: enum, values: ["yes"]}
+        as: {type: enum, values: [selection, dataset, evalset, artifact]}   # artifact: the picked rows are an artifact's content (W4)
+        artifact_kind: {type: text, pattern: "[a-z][a-z0-9_]*"}           # with as artifact: examples, rubric, …
+        line: {type: name}
+        parent: {ref: [dataset, evalset]}
+        fills: {ref: [want]}
+        env: {type: text}
+        evals: {ref: [recipe], many: true}
+        endpoint: {ref: [module]}        # a train: the module that serves its model (its `file` role); the endpoint wrap lands with it
+        skip_smoke: {type: enum, values: ["yes"]}
+        invalid_if: {type: json}         # {min_n: N}: fewer judged rows = the result is marked invalid
+    out:
+      min:
+        run: {ref_out: run}
+      opt:
+        set: {ref_out: [selection, dataset, evalset]}
+        job: {ref_out: job, via: exec.job.submit}
+        decision: {ref_out: decision}    # an eval (a pipeline with a win rule): what its rule concluded, with the row it read
+    requires:
+      - {rule: module.header, subject: recipe.module, on_fail: refuse}
+      - {rule: run.input_fits, subject: recipe, on_fail: refuse}
+      - {rule: run.sensitivity, subject: recipe, on_fail: refuse}
+      - {rule: control.plan_wants, subject: in, kind: data, when: "as in [dataset, evalset]", on_fail: refuse}
+      - {rule: control.plan_wants, subject: in, kind: model, when: "kind == train", on_fail: refuse}
+      - {rule: control.fills, subject: fills, when: "fills given and kind in [derive, check, generate, pipeline]", on_fail: refuse}
+      - {rule: control.fills, subject: fills, when: "fills given and kind == train", on_fail: refuse, deferred: true}   # its model, when it lands
+      - {rule: run.endpoint_serves, subject: recipe, when: "kind == generate", on_fail: refuse}
+      - {rule: run.has_eval, subject: recipe, when: "kind == train", on_fail: refuse}
+      - {rule: run.min_n, subject: run, when: "invalid_if given", on_fail: mark_invalid}
+      - {rule: run.inputs_declared, subject: recipe, when: "kind in [derive, check, generate]", on_fail: warn}
+      - {rule: run.input_complete, subject: recipe, on_fail: warn}
+      - {rule: run.other_task_versioned, subject: recipe, on_fail: warn}
+      - {rule: run.judged_in_plan, subject: recipe, when: "kind == check", on_fail: warn}
+      - {rule: run.arm_on_version, subject: recipe, on_fail: refuse}
+      - {rule: run.pinned, subject: recipe, on_fail: refuse}
+      - {rule: run.contamination, subject: "on", when: "kind == check", on_fail: refuse, if_acked: mark_invalid}
+      - {rule: run.leak, subject: "on", when: "kind == check", on_fail: refuse, if_acked: mark_invalid}
+      - {rule: run.split_assigned, subject: set, when: "as == dataset", on_fail: refuse}
+      - {rule: run.group_leak, subject: set, when: "as == dataset", on_fail: refuse}
+      - {rule: run.unit_set, subject: set, when: "as in [dataset, evalset]", on_fail: refuse}
+      - {rule: run.frozen_test, subject: set, when: "parent given", on_fail: refuse}
+      - {rule: run.excluded_kept, subject: set, when: "as in [dataset, evalset]", on_fail: warn}
+      - {rule: run.win_clean, subject: decision, when: "decision given", on_fail: warn}
+    calls: [exec.job.submit, recipe.make, run.go]
+    emits: [run.done]
+
+  - id: run.contamination
+    kind: rule
+    next: "evaluate on rows the model never trained on (another evalset), or `bitt ack` it: the result is then marked invalid"
+    summary: the model that produced the judged rows was not trained on any of the rows it made them from (read from both lineages)
+    reads: before
+    in: {min: {"on": {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+
+  - id: run.leak
+    kind: rule
+    next: "judge with a model that never trained on these outputs, or `bitt ack` it: the result is then marked invalid"
+    summary: no judge on the way (a generate reading another generate's outputs) was trained on rows that include what it judges
+    reads: before
+    in: {min: {"on": {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+
+  - id: run.split_assigned
+    kind: rule
+    next: "make the select give every row a split: train, val or test"
+    summary: every member of a dataset has exactly one split (train / val / test)
+    in: {min: {set: {ref: [dataset]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+
+  - id: run.group_leak
+    kind: rule
+    next: "split by the group (all rows of one group on one side), e.g. by question id"
+    summary: no value of the select's group key (its `group` param or role) is on two sides of the split; read from the rows, never the module's claim
+    in: {min: {set: {ref: [dataset]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+
+  - id: run.unit_set
+    kind: rule
+    next: "select over the raw rows, or build the units first with a table derive"
+    summary: a dataset / evalset is a set over its units (raw rows, or a table derive's rows), never over a row module's outputs
+    in: {min: {set: {ref: [dataset, evalset]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+
+  - id: run.frozen_test
+    kind: rule
+    next: "keep the parent's test members as they are (rows may be taken out), or add units for a new test side"
+    summary: a new version of a dataset line keeps its parent's test members on the test side unless it adds units
+    in: {min: {set: {ref: [dataset, evalset]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+
+  - id: run.excluded_kept
+    kind: rule
+    next: "bitt data exclude <it> --rows <file> --because \"…\" takes them out (a new version); the old version keeps its rows"
+    summary: "the new set holds no row a person marked excluded in this task (A22, informational: it never changes a set)"
+    in: {min: {set: {ref: [dataset, evalset]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: run.win_clean
+    kind: rule
+    next: "judge with a check trusted here (builtin, or trusted: bitt tag <check> --trust trusted), or read the decision as a hint"
+    summary: "a decision is clean only over a check trusted in this task (builtin / trusted): the check the aggregate ran on, else the aggregate itself"
+    in: {min: {decision: {ref: [decision]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: run.answer
+    kind: maneuver
+    open_in: [GOAL, WORK, JUDGE, EXPLORE]
+    extends: base.write
+    summary: >-
+      a person's answers to an open person run (C9): {row: reply}, each reply parsed into the prompt's gives like a model's; a row
+      already answered keeps its first answer (a new answer is a new run)
+    in:
+      min:
+        run: {ref: [run]}
+        answers: {type: json}            # {input row hash (or a unique ≥8 prefix): the reply text}
+    out:
+      min:
+        answered: {ref_out: answer}
+    requires:
+      - {rule: run.person_open, subject: run, on_fail: refuse}
+
+  - id: run.close
+    kind: maneuver
+    open_in: [GOAL, WORK, JUDGE, EXPLORE]
+    extends: base.write
+    summary: end an open person run; its rows (the answers) become its output set; rows nobody answered are counted, never invented
+    in:
+      min:
+        run: {ref: [run]}
+    out:
+      min:
+        closed: {ref_out: answer}
+    requires:
+      - {rule: run.person_open, subject: run, on_fail: refuse}
+
+  - id: run.person_open
+    kind: rule
+    next: "label or close only an open run of a person connector (bitt run status lists them)"
+    summary: the run's recipe has a person connector, and the run has not been closed
+    reads: before
+    in: {min: {run: {ref: [run]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: run.pinned
+    kind: rule
+    next: "run it on the data its wrap pins (bitt show <the wrap>), or use a wrap that does not pin that role (make one: bitt module wrap … without --pin)"
+    summary: a run of a wrap that pins data walks exactly that data (`on`) and reads exactly it (another pinned role); nothing else
+    reads: before
+    in: {min: {recipe: {ref: [recipe]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: run.arm_on_version
+    kind: rule
+    next: "version the evalset (or dataset) first (bitt tag <it> --version: a person's for a first one), then run the arm on <line>@<version>"
+    summary: in a working cycle whose plan an eval judges, an arm runs on versions only (the data it walks and reads), so its verdict is a result on named, frozen data; when the eval pins its units, on exactly those
+    reads: before
+    in: {min: {recipe: {ref: [recipe]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: run.judged_in_plan
+    kind: rule
+    next: "judge through the plan (its eval runs on each arm), or read these verdicts as a hint"
+    summary: "in a working cycle the plan's eval is how a thing is judged: a check run outside it is allowed and warned, its verdicts a hint, never the cycle's result (owner 11-04, SOP Q5)"
+    reads: before
+    in: {min: {recipe: {ref: [recipe]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: run.other_task_versioned
+    kind: rule
+    next: "ask the other task to version it (bitt tag … --tag version), then read <task>/<name>@<version>; what you make from it cannot be versioned until then (tag.upstream_tagged)"
+    summary: every input read from another task is a version of its dataset or evalset (anything else there may change under you)
+    reads: before
+    in: {min: {recipe: {ref: [recipe]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: run.input_complete
+    kind: rule
+    next: "close the person run first (bitt run close), or read it knowing the answers are partial"
+    summary: no input is a person run that is still open (what it holds so far is partial)
+    reads: before
+    in: {min: {recipe: {ref: [recipe]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: run.input_fits
+    kind: rule
+    next: "run it on data that has the bound columns (or bind them to columns it has: a new recipe with --cols); a second input is joined first (bitt recipe join)"
+    summary: >-
+      a row module takes one input; every column the recipe binds is a column of the input or of a table above it (`table.column`
+      picks one when two have it). Only a join takes `read` inputs: each one has a key, and every key and picked column is there
+    reads: before                    # judged before anything runs
+    in: {min: {recipe: {ref: [recipe]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: run.sensitivity
+    kind: rule
+    next: "run it in an env that may take this data (envs.yaml max_sensitivity), or on less sensitive data"
+    summary: the env takes data at least as sensitive as everything the run reads (public < internal < company < personal)
+    reads: before                    # judged before anything runs
+    in: {min: {recipe: {ref: [recipe]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: run.endpoint_serves
+    kind: rule
+    next: "check the endpoint: start the server, refresh the key file if the key rotated, or fix the model id the wrap names"
+    summary: a generate module that names an endpoint (url + model) is served by it (asked /models before anything is sent)
+    reads: before
+    in: {min: {recipe: {ref: [recipe]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: run.has_eval
+    kind: rule
+    next: "name the eval before the train starts: --evals <check recipe>"
+    summary: a train names at least one eval before it starts, and each is a check recipe
+    reads: before                    # judged before anything runs
+    in: {min: {recipe: {ref: [recipe]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: run.min_n
+    kind: rule
+    next: "judge more rows (a larger evalset), or drop invalid_if"
+    summary: the check ran over at least invalid_if.min_n rows
+    in: {min: {run: {ref: [run]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+
+  - id: run.inputs_declared
+    kind: rule
+    next: "read what the module needs through its inputs (a column, an artifact), not from the network or a file"
+    summary: the module reaches nothing outside its job folder (no network, no file, no subprocess); else the run is untraced
+    reads: before                    # judged before anything runs
+    in: {min: {recipe: {ref: [recipe]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
