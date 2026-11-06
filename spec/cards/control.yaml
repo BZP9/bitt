@@ -1,0 +1,363 @@
+# Control — what is being tried, why, and whether it is done. A task is a root goal.
+tool: control
+cards:
+
+  - id: control.goal.open_root
+    kind: maneuver
+    extends: base.root
+    summary: open a task (= a goal with no parent). An agent may open one only by naming a usr `authority`.
+    in:
+      min:
+        problem: {type: text}
+        name: {type: name}             # the task's namespace (docs/v2/names.md §2a): `<name>/<line>@1.0` from other tasks, its schema
+      opt:
+        eli5: {type: text}
+        authority: {type: json}      # list of usr actors who may approve under this task; default = [the opener] if the opener is a usr
+    out:
+      min:
+        goal: {ref_out: goal, state: open}
+      qol: [alias or short name]
+    requires:
+      - {rule: control.has_authority, subject: goal, on_fail: refuse}
+      - {rule: control.unique_task_name, subject: goal, on_fail: refuse}
+    emits: [goal.opened]
+
+  - id: control.goal.open
+    kind: maneuver
+    open_in: [GOAL]
+    extends: base.write
+    summary: open a subgoal, or a new version of one (`supersedes`). Subgoals are versioned; the root stays abstract.
+    in:
+      min:
+        in: {ref: [goal], state: [open]}
+        problem: {type: text}
+      opt:
+        contract: {type: json}       # the success test; a change of it = goal major
+        supersedes: {ref: [goal], many: true}   # refine / change / replace = one; merge = several; split = several new goals each superseding the same one
+        because: {ref: [finding, decision], many: true, required_when: "supersedes given"}
+    out:
+      min:
+        goal: {ref_out: goal, state: open}
+        bump: {type: enum, values: [minor, major]}
+    requires:
+      - {rule: control.not_root, subject: supersedes, when: "supersedes given", on_fail: refuse}
+      - {rule: control.human_actor, subject: goal, on_fail: refuse}    # every subgoal open / version is the usr's (goals are the usr's)
+    emits: [goal.opened]
+
+  - id: control.cycle.open
+    kind: maneuver
+    extends: base.write
+    in:
+      min:
+        in: {ref: [goal], state: [open]}                   # cycles live under goals; one cycle starts another with `because`, never as `in`
+        question: {type: text}
+        level: {type: enum, values: [working, explore]}   # a goal is a goal node (container), not a cycle
+        because: {ref: [finding, decision, goal, cycle], many: true, min: 1}   # M3: the first working cycle's reason is its goal cycle
+      opt:
+        scope: {type: json}          # which components may change
+    out:
+      min:
+        cycle: {ref_out: cycle, state: open}
+    emits: [cycle.opened]
+
+  - id: control.want
+    kind: maneuver
+    open_in: [GOAL, FRAME, WORK, EXPLORE]
+    extends: base.write
+    summary: create a want with a versioned contract; whoever wants a thing creates it (no forward refs)
+    in:
+      min:
+        want_kind: {type: enum, values: [dataset, evalset, module, artifact, recipe, run]}
+        contract: {type: json}
+      opt:
+        name: {type: text, pattern: "[a-z][a-z0-9_]*"}   # the name a fill takes (names.md: content of the plan, bound when the arm is filled)
+        supersedes: {ref: [want]}
+    out:
+      min:
+        want: {ref_out: want, state: open}
+
+  - id: control.plan
+    kind: maneuver
+    open_in: [FRAME, WORK]
+    extends: base.write
+    in:
+      min:
+        in: {ref: [cycle], state: [open]}
+        arms: {ref: [want, dataset, evalset, module, artifact, recipe, run], many: true, min: 1}  # an existing node = an arm already filled
+        win: {type: text}            # what done looks like, in words; the mechanical part is the pipeline's win expression
+      opt:
+        pipeline: {ref: [module]}    # the eval, fixed at plan time: it runs on each arm when the arm is filled. Required unless every arm
+                                     # is data (judged by a person's validation). An agent's plan counts once a person approves it
+        judged_by: {type: enum, values: [person]}   # no eval: a person's verdict (or a granted agent's pass) measures each arm
+        budget: {type: json}
+    out:
+      min:
+        plan: {ref_out: plan}
+    requires:
+      - {rule: control.plan_has_eval, subject: in, on_fail: refuse}
+
+  - id: control.log.finding
+    kind: maneuver
+    extends: base.write
+    in:
+      min:
+        in: {ref: [cycle], state: [open]}
+        text: {type: text}
+        evidence: {ref: [run, decision, ruling, validation, tag], many: true, min: 1}
+      opt:
+        about: {type: ref}
+        finding_kind: {type: enum, values: [conclusion, fact]}
+    out:
+      min:
+        finding: {ref_out: finding}
+
+  - id: control.validate
+    kind: maneuver
+    extends: base.write
+    in:
+      min:
+        subject: {type: ref}
+        verdict: {type: enum, values: [pass, fail, approve, reject]}   # approve / reject: only a usr with authority in the task it is written in
+      opt:
+        evidence: {ref: [run, decision], many: true}
+    out:
+      min:
+        validation: {ref_out: validation}
+    emits: [validated]                 # a person's approve of an agent's plan starts its eval on the arms already filled (owner 11-04)
+    requires:
+      - {rule: control.same_task, subject: subject, on_fail: refuse}
+      - {rule: control.can_approve, subject: subject, when: "verdict in [approve, reject]", on_fail: refuse}
+
+  - id: control.policy
+    kind: maneuver
+    open_in: [GOAL]
+    extends: base.write
+    summary: >-
+      a rule: a check recipe run on the inputs of every call of one maneuver under this goal; a call it fails is refused ("never
+      train with seed 3 here"). The only policy form: "after X do Y" is a pipeline, never a trigger (2026-10-28)
+    in:
+      min:
+        in: {ref: [goal], state: [open]}
+        on_event: {type: text}         # the maneuver it guards (a card id)
+        rule: {ref: [recipe]}          # a check recipe run on the call's inputs; refuse when it fails. No condition strings.
+    out:
+      min:
+        policy: {ref_out: policy}
+    requires:
+      - {rule: control.human_actor, subject: policy, on_fail: refuse}      # policies are the task's rules: the usr's
+      - {rule: control.policy_shape, subject: policy, on_fail: refuse}
+
+  - id: control.policy_retire
+    kind: maneuver
+    open_in: [GOAL]
+    extends: base.write
+    summary: stop a policy (its rule and triggers skip a retired policy); nothing is deleted
+    in:
+      min:
+        in: {ref: [goal], state: [open]}
+        policy: {ref: [policy]}
+        reason: {type: text}
+    out:
+      min:
+        retired: {ref_out: policy_retired}
+    requires:
+      - {rule: control.human_actor, subject: policy, on_fail: refuse}
+      - {rule: control.same_task, subject: policy, on_fail: refuse}
+
+  - id: control.policy_shape
+    kind: rule
+    next: "make `then` a maneuver (or `refuse` for a rule) and give `then_args` only inputs of `then`, never `in`"
+    summary: "`then` is a maneuver (or `refuse` for a rule); `then_args` names only inputs of `then`, and never `in`"
+    in: {min: {policy: {ref: [policy]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: control.act
+    kind: maneuver
+    extends: base.write
+    in:
+      min:
+        in: {ref: [cycle, goal], state: [open]}      # a goal takes only close / abandon (that is how an aim is dropped)
+        outcome: {type: enum, values: [iterate, spawn, park, resume, abandon, close, earlystop]}
+      opt:
+        resolving: {type: ref}       # earlystop: the new eval version it was stopped for
+        reason: {type: text, required_when: "outcome in [park, abandon, earlystop]"}
+    out:
+      min:
+        result: {ref_out: outcome}     # M3: was `outcome`, which shadowed the input in `when:`. A new node pointing at the cycle; the cycle itself never changes
+    requires:
+      - {rule: control.act_allowed, subject: in, on_fail: refuse}
+
+  - id: control.grant
+    kind: maneuver
+    extends: base.write
+    summary: >-
+      a person lets an agent do some of their acts under a cycle, a goal or the whole task (and all below it): close, earlystop,
+      validate_pass (an agent's pass then measures an arm). Never a version, trust, approve / reject: those stay a person's (kernel.md §3b)
+    in:
+      min:
+        to: {type: text}               # the agent: agent:<name>
+        acts: {type: json}             # a list, of close / earlystop / validate_pass
+        reason: {type: text}
+    out:
+      min:
+        grant: {ref_out: grant}
+    requires:
+      - {rule: control.human_actor, subject: in, on_fail: refuse}
+      - {rule: control.grant_shape, subject: in, on_fail: refuse}
+
+  - id: control.revoke
+    kind: maneuver
+    extends: base.write
+    summary: a person ends a grant (it stops counting from now on; what it allowed before stays)
+    in:
+      min:
+        grant: {ref: [grant]}
+        reason: {type: text}
+    out:
+      min:
+        revocation: {ref_out: revocation}
+    requires:
+      - {rule: control.human_actor, subject: in, on_fail: refuse}
+      - {rule: control.same_task, subject: grant, on_fail: refuse}
+
+  - id: control.ack
+    kind: maneuver
+    extends: base.write
+    summary: silence a goal-drift warning for one node at the current goal version (the next major warns again)
+    in:
+      min:
+        subject: {type: ref}
+      opt:
+        reason: {type: text}
+        rule: {type: text}           # ack a rule's predicted ruling (run.leak / run.contamination); none = goal drift
+        against: {type: ref}         # the other member of a pair check (the scorer / eval set); absent = against any
+    out:
+      min:
+        ack: {ref_out: ack}
+    requires:
+      - {rule: control.same_task, subject: subject, on_fail: refuse}
+
+  - id: control.approval
+    kind: rule
+    next: "ask a person with authority on the task to approve it: control.validate verdict=approve (an agent cannot)"
+    summary: the LATEST approve / reject validation on the subject by a usr with authority in the gated call's task, made in that task, is `approve` (a later reject revokes)
+    in:
+      min:
+        subject: {type: ref}
+    out:
+      min:
+        ruling: {ref_out: ruling}
+    cache: never                     # M3: depends on validations written later, not on the subject hash
+
+  - id: control.fills
+    kind: rule
+    next: "the want's contract changed or does not match: make the output again under the current contract, or `control.want` a new want"
+    summary: a fill node satisfies the want's contract version
+    in:
+      min:
+        want: {ref: [want]}
+        fill: {type: ref}
+    out:
+      min:
+        ruling: {ref_out: ruling}
+    cache: never                     # depends on the fill, not just the want
+
+  - id: control.plan_has_eval
+    kind: rule
+    next: "name the eval that judges the arms (bitt plan … --eval <pipeline>; even a one-check eval), or say a person judges them (--judged-by person)"
+    summary: a working cycle's plan says how its arms are judged - an eval (a pipeline), or a person (judged_by person); data arms are a person's by default
+    in: {min: {in: {ref: [cycle]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: control.grant_shape
+    kind: rule
+    next: "grant an agent (to=agent:<name>) one or more of close / earlystop / validate_pass; versions, trust and approve stay a person's"
+    summary: a grant goes to an agent and names acts a person may delegate (close, earlystop, validate_pass)
+    in: {min: {in: {ref: [cycle, goal]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: control.act_allowed
+    kind: rule
+    next: "check the cycle's state (bitt status <task>): close in ACT or EXPLORE; iterate / spawn in ACT; resume a PARKED cycle first"
+    summary: >-
+      cycle: close in ACT or EXPLORE; iterate / spawn in ACT; resume in PARKED; park / earlystop in any open state but PARKED; abandon in any
+      open state. goal: close / abandon only.
+    reads: before                    # judged on the cycle's state before this call's outcome exists
+    in: {min: {cycle: {ref: [cycle]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: control.plan_wants
+    kind: rule
+    next: "add the arm with a new `control.plan` (its arms include this kind), or `control.cycle.open` a branch for it"
+    summary: the cycle's plan has an arm of the requirement's `kind` (a data-prep cycle can't train); explore always passes
+    in: {min: {cycle: {ref: [cycle]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: control.can_approve
+    kind: rule
+    next: "approve / reject are a person's: ask the task's usr (bitt status <task> names who may)"
+    summary: the writing actor is a usr in the authority of the subject's task (approve / reject are refused for anyone else)
+    in: {min: {subject: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: control.has_authority
+    kind: rule
+    next: "open the task as a usr (bitt task new …) or pass `authority` naming at least one usr"
+    summary: a new task has at least one usr who can approve (the opener if a usr, else its `authority` list)
+    in: {min: {goal: {ref: [goal]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: subject
+
+  - id: control.unique_task_name
+    kind: rule
+    next: "pick another task name (bitt tasks lists the names in use)"
+    summary: no other task has this name (cross-task aliases `@<name>/<line>` must be unambiguous), and its view schema (lower-cased [a-z0-9_]) is neither reserved (bitt, public, information_schema, pg_*, the data schemas) nor another task's
+    in: {min: {goal: {ref: [goal]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: control.same_task
+    kind: rule
+    next: "judge only your own task's nodes: work in the subject's task, or cite the other task's output (pin it) instead"
+    summary: the subject belongs to the caller's task (validations and acks judge or clear only your own task's nodes)
+    in: {min: {subject: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: control.human_actor
+    kind: rule
+    next: "a person does this: ask the task's usr (bitt status <task>); an agent proposes, a usr decides"
+    summary: the writing actor is a usr with authority on this task (goal majors are the usr's)
+    in: {min: {subject: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: control.not_root
+    kind: rule
+    next: "the root task is never versioned: open a goal under it (control.goal.open) and version that"
+    summary: the root task is never versioned
+    in: {min: {goal: {ref: [goal]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: subject
+
+  - id: control.goal_drift
+    kind: rule
+    next: "re-frame the input under the current goal (redo it in a cycle of the new major), or `control.ack` with check=control.goal_drift"
+    summary: an input framed under a goal version that is now behind by a major (and not acked) → warn
+    in: {min: {subject: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: control.task_boundary
+    kind: rule
+    next: "pin another task's outputs by name (other/name@1.0) or cite its findings; never use its goal, cycle or plan"
+    summary: a write may pin another task's outputs and cite its findings / decisions, never use its intent (goal, cycle, plan, want)
+    in: {min: {subject: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never

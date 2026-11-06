@@ -1,0 +1,24 @@
+# The cycle machine and the clearing rules (workflow-states-v0.md §2–4). States are derived from nodes, never stored.
+tool: base
+cards: []
+
+states:
+  GOAL:    {purpose: "a goal is a container: contract, policies, shared definitions, approvals", exit: "work happens in cycles: `cycle.open` under this goal"}
+  FRAME:   {purpose: "say the question and what would count as an answer", exit: "a plan with ≥1 arm → WORK"}
+  WORK:    {purpose: "produce and measure what the plan wants", exit: "every arm measured (or dropped by a new plan) → JUDGE"}
+  JUDGE:   {purpose: "turn the evidence into a conclusion", exit: "a conclusion (`log.finding finding_kind=conclusion`) → ACT"}
+  ACT:     {purpose: "decide what the conclusion means", exit: "act close / iterate (→ FRAME) / spawn / park / abandon / earlystop"}
+  EXPLORE: {purpose: "try things freely; nothing here can be versioned", exit: "act close (promote = a working cycle citing these nodes)"}
+  PARKED:  {purpose: "stopped on purpose, resumable", exit: "act resume → back to the derived state"}
+  CLOSED:  {purpose: "the record of what was learned (read only)", exit: "none; branch with `cycle.open --because`"}
+  EARLYSTOPPED: {purpose: "stopped before its conclusion because its eval changed (read only); running jobs still land and stay reusable",
+                 exit: "none; a new cycle under the new eval takes its arms (`plan arms=` its wants / nodes)"}
+
+# A maneuver without `open_in` is open in base.yaml `default_open_in` (never CLOSED / EARLYSTOPPED).
+
+clears:                 # todo = every node under a goal whose clearing node does not exist yet
+  cycle:      {cleared_by: "outcome close / abandon", owner: agent, parked: "listed separately"}
+  arm:        {cleared_by: "filled, then measured under the plan (score / validation / agreement)", owner: agent}
+  job:        {cleared_by: "job.finish", owner: exec}
+  judge:      {cleared_by: "a conclusion", owner: agent}
+  proposal:   {cleared_by: "usr approval (a major version in ACT, a trusted check)", owner: usr}

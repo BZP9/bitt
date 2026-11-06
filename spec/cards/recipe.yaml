@@ -1,0 +1,58 @@
+# recipe — a use of a module (foundation.md §C1, §M): this module, with these settings, on these columns. Not versioned: its hash is
+# the work (the same in every task); it changes when a part changes. Its label is derived and never changes: the main artifact @v,
+# else the module @v, then the first 8 hex of the work (`summarize@2:1d2b8a52`); never stored.
+tool: recipe
+cards:
+
+  - id: recipe.make
+    kind: maneuver
+    open_in: [GOAL, FRAME, WORK, JUDGE, EXPLORE]
+    extends: base.write
+    summary: >-
+      a recipe: module (or wrap) @v + artifacts {role: @v} + params + cols (every column the module or an artifact needs → a data
+      column). Every version it names is pinned now: a newer one changes nothing until a new recipe. `name` is an optional alias (a plan
+      arm); `why` is optional (the required because is on tags, plans and decisions).
+    in:
+      min:
+        module: {ref: [module]}
+      opt:
+        artifacts: {ref_map: [artifact]}
+        params: {type: json}
+        cols: {type: json}               # {role: column}: `text` → `body`, or a column of a table above: `question` → `qa.question`
+        name: {type: name}
+        why: {type: text}
+        samples: {type: int}             # ask each row N times (a generate): part of the recipe, never of the run; not of the row key
+        sample_rows: {type: int}         # the ladder's sample rung: smoke (1 row) → this many rows (default 10) → all; not of the row key
+    out:
+      min:
+        recipe: {ref_out: recipe}
+    requires:
+      - {rule: recipe.fits, subject: recipe, on_fail: refuse}
+      - {rule: recipe.cols_bound, subject: recipe, on_fail: refuse}
+      - {rule: recipe.not_deprecated, subject: recipe, on_fail: warn}
+
+  - id: recipe.fits
+    kind: rule
+    next: "give only params the module declares (each of its type, every one without a default), and an artifact of the right kind in each role"
+    summary: >-
+      the params fit the module (no unknown one, each of its type, every one without a default given) and each role the module declares
+      is filled with an artifact of its kind (a connector's prompt with a prompt), none it does not declare
+    in: {min: {recipe: {ref: [recipe]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+
+  - id: recipe.cols_bound
+    kind: rule
+    next: "bind every column the module and its artifacts need: --cols <role>=<column> (a column of a table above: <role>=<table>.<column>)"
+    summary: >-
+      every column the module reads and every slot its artifacts need is bound to a data column; none is matched implicitly, none is
+      bound that nothing needs, every column is a column name
+    in: {min: {recipe: {ref: [recipe]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+
+  - id: recipe.not_deprecated
+    kind: rule
+    next: "use the version that replaced it (bitt show <it> says why it was deprecated), or go on knowing"
+    summary: nothing the recipe names (its module, a wrap it runs, an artifact it fills) is deprecated
+    in: {min: {recipe: {ref: [recipe]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never

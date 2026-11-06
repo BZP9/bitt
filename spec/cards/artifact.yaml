@@ -1,0 +1,33 @@
+# artifact — content used whole (foundation.md §B): a prompt, a model file, a rubric, examples, a config. On the shelf like modules.
+tool: artifact
+cards:
+
+  - id: artifact.add
+    kind: maneuver
+    extends: base.root
+    summary: >-
+      add an artifact (or its next version) to the shelf: its content (kept by hash), its kind, and its contract needs → gives (a
+      prompt: its slots → its fields; plain content has none). `does` is the file's (`"bitt": {"does": …}`), else given here.
+    in:
+      min:
+        content: {type: bytes}
+        artifact_kind: {type: text, pattern: "[a-z][a-z0-9_]*"}   # prompt · model · rubric · examples · config · … (an open list)
+        name: {type: name}
+        in: {ref: [cycle, goal], as: origin}
+      opt:
+        does: {type: text}
+        parent: {ref: [artifact]}
+        source: {type: json}             # {path, repo, commit}: where the file is
+    out:
+      min:
+        artifact: {ref_out: artifact}
+    requires:
+      - {rule: artifact.parses, subject: artifact, on_fail: refuse}
+      - {rule: module.line_free, subject: artifact, on_fail: refuse}
+
+  - id: artifact.parses
+    kind: rule
+    next: "fix the file: a prompt is {\"bitt\": {\"does\": …}, \"gives\": {…}, \"messages\": […]}; other content needs --does"
+    summary: the content still hashes to its node, a prompt parses (its needs and gives), and the artifact says what it is for
+    in: {min: {artifact: {ref: [artifact]}}}
+    out: {min: {ruling: {ref_out: ruling}}}

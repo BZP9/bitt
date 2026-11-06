@@ -1,0 +1,48 @@
+# data — rows with lineage (foundation.md §B). Loaded rows land in raw.<line> once; made rows come from runs (run.yaml).
+tool: data
+cards:
+
+  - id: data.load
+    kind: maneuver
+    extends: base.root
+    summary: >-
+      a file or table snapshot → raw.<line> (distinct rows) + the import (a set of its rows, in file order). Any shape is taken as it
+      comes; bitt stamps its own columns. A re-import is a new import over the same line (rows already there are not stored again).
+    in:
+      min:
+        bytes: {type: bytes}           # the file or table snapshot
+        origin: {type: text}           # where it came from (path, table, URL)
+        sensitivity: {type: enum, values: [public, internal, company, personal]}
+        line: {type: name}
+        does: {type: text}             # what the data is, in one sentence (a module's `does` for data): how it is found later
+      opt:
+        format: {type: enum, values: [json, jsonl, csv, xlsx]}   # how to read the bytes (default: from the origin's suffix, else json)
+        sheet: {type: text}            # xlsx: the sheet (default: the first)
+        rename: {type: json}           # {header: name}: names for some headers, the rest proposed
+        unit_key: {type: text}         # the column that names "the same unit" across imports
+        in: {ref: [cycle, goal], as: during}   # the cycle it was loaded for: a hint, never ownership (raw is no task's)
+        with: {ref: [module]}          # a loader (a module of kind load: fn(data: bytes) → rows) reads the bytes, in a job (A21)
+        params: {type: json}           # the loader's params
+    out:
+      min:
+        raw: {ref_out: raw}            # the import node; its set = the rows in file order
+    requires:
+      - {rule: module.header, subject: with, when: "with given", on_fail: refuse}
+    calls: [exec.job.submit]
+    emits: [raw.imported]
+
+  - id: data.exclude
+    kind: maneuver
+    extends: base.write
+    summary: >-
+      mark rows of a dataset or evalset as bad, with the reason (A22): informational only (a version always means the same rows): the
+      rows are taken out by a new version (the `exclude` select, `bitt data exclude` does both), and a later set that still holds them
+      is warned
+    in:
+      min:
+        set: {ref: [dataset, evalset]}
+        rows: {type: json}               # [row hash], the rows marked
+        because: {type: text}
+    out:
+      min:
+        mark: {ref_out: excluded}
