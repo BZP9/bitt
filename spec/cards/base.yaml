@@ -1,0 +1,47 @@
+# bitt kernel cards: the shared cards every card inherits or requires (docs/v2/foundation.md, rebuild.md). Lint: `bitt lint`.
+tool: base
+cards:
+
+  - id: base.write
+    kind: base
+    summary: every write carries intent + actor + resolvable inputs + stamp, or is refused
+    in:
+      min:
+        in: {ref: [goal, cycle], state: [open]}
+        actor: {type: actor}          # usr[:<name>] · agent:<name> · system · pipeline:<run> · policy:<id>
+    out:
+      min:
+        stamp: {type: stamp}          # {tool, card, contract, actor, seq}; added by the kernel, never by the caller
+        event: {ref_out: event}       # every write is an event; jobs point at it
+      opt:
+        flag: {ref_out: flag}         # written when a `mark_invalid` requirement fails
+        warning: {ref_out: warning}   # written when a `warn` requirement fails (shown, never an obligation)
+    requires:
+      - {rule: record.resolve, subject: "every ref", on_fail: refuse}
+      - {rule: control.goal_drift, subject: "every input", on_fail: warn}
+      - {rule: control.task_boundary, subject: "every ref input", on_fail: refuse}
+
+  - id: base.root
+    kind: base
+    summary: a write with no upstream; only the cards listed in roots below may extend it
+    extends: base.write
+    drop: [in.min.in]
+
+contract_version: "2.0"   # kernel contract v2 (docs/v2/). Additive change = 2.x
+roots: [control.goal.open_root, data.load, module.define, module.wrap, artifact.add, exec.job.sync]   # the types are global: no `in`
+# Tool DAG for nested calls (a tool may call only tools to its right)
+dag: [control, tag, run, recipe, data, artifact, module, exec, record]
+
+# Link roles (docs/v2/walk.md §2): every role means one thing, everywhere. Lineage (what a thing was made from) = every class but
+# story; story = why / where / judged by. Lint refuses a role in two classes, and a role a card or an impl can write that is in none.
+impl_roles: [event, job, against, prev, run, judged, subject, recipes, dataset, line, wraps, target, steps, eval]
+roles:
+    units: ["on"]                                                     # what a run walked (quoted: YAML reads on as true)
+    reads: [read]                                                     # the other inputs it read, by role
+    made_with: [recipe, recipes, module, artifact, artifacts, endpoint, eval, with, wrap, wraps, pin]
+    made_by: [run, steps, event, caller_event, job]
+    made_from: [parent, set]                                          # a version's parent rows, the set an exclude acts on (#9, 11-03)
+    story: [in, origin, because, evidence, fills, resolving, supersedes, subject, ruling, against, line, target, replaces, during, evals, grant, judged,
+            about, agreement, arms, cycle, dataset, decision, fill, goal, pipeline, policy, prev, want, ref, rule]   # #9 (11-03): context, not made-from
+named_sets: {protected: [live]}
+default_open_in: [GOAL, FRAME, WORK, JUDGE, ACT, EXPLORE, PARKED]

@@ -1,0 +1,82 @@
+# module — code that does one thing (foundation.md §B): a Python file whose function is its contract (src/bitt/tools/header.py).
+# Modules live on the shelf (`lib`): any task uses them the same way; the cycle a module was added in is kept as its origin, never used.
+tool: module
+cards:
+
+  - id: module.define
+    kind: maneuver
+    extends: base.root
+    summary: >-
+      add a module (or its next version) to the shelf: its file (kept by hash), its contract read from the function (kind, reads,
+      writes, params, roles, calls) and `does` (the docstring's first line). A new version names its parent or takes its line's name;
+      major or minor is said by its version tag (tag.yaml).
+    in:
+      min:
+        code: {type: bytes}
+        name: {type: name}
+        in: {ref: [cycle, goal], as: origin}     # where it was added (F18): kept, never used; sets no task and no state lock
+      opt:
+        parent: {ref: [module]}
+        source: {type: json}                     # {path, repo, commit}: where the file is; module.in_git reads the commit
+    out:
+      min:
+        module: {ref_out: module}
+    requires:
+      - {rule: module.header, subject: module, on_fail: refuse}
+      - {rule: module.line_free, subject: module, on_fail: refuse}
+
+  - id: module.wrap
+    kind: maneuver
+    extends: base.root
+    summary: >-
+      a module with some params or artifacts fixed is a module (foundation.md §B): `qwen` = the openai_chat connector + its url, model
+      id and key file. It is on the shelf, versioned like any module, and pins the version it wraps.
+    in:
+      min:
+        module: {ref: [module]}
+        name: {type: name}
+        does: {type: text}
+        in: {ref: [cycle, goal], as: origin}
+      opt:
+        params: {type: json}                     # fixed: a recipe of the wrap cannot set them
+        artifacts: {ref_map: [artifact]}         # {role: artifact}: fixed slots (a model file in an endpoint's `file`)
+        pin: {ref_map: [raw, dataset, evalset, selection]}   # {role: data}: `on` = the only units it walks; another role = a fixed read
+        parent: {ref: [module]}
+    out:
+      min:
+        wrap: {ref_out: module}
+    requires:
+      - {rule: module.wrap_fits, subject: wrap, on_fail: refuse}
+      - {rule: module.line_free, subject: wrap, on_fail: refuse}
+
+  - id: module.header
+    kind: rule
+    next: "fix the file (src/bitt/tools/header.py lists what each kind's function looks like) and add it again"
+    summary: >-
+      the module's code still hashes to its node, and its contract is complete: a known kind, one public function whose signature is
+      the contract, a one-line `does`; a check calls no model; a pipeline has no `while`
+    in: {min: {module: {ref: [module]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+
+  - id: module.line_free
+    kind: rule
+    next: "give it another name, or name its parent (a new version of that module)"
+    summary: no other line holds this name on the shelf; a new version stays on its parent's line and keeps its kind
+    in: {min: {module: {ref: [module]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: module.wrap_fits
+    kind: rule
+    next: "fix only params the wrapped module declares (its types), and artifacts in the roles it declares (of the kind each role takes)"
+    summary: a wrap fixes params the wrapped module declares (each of its type) and fills roles it declares with artifacts of that kind
+    in: {min: {wrap: {ref: [module]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+
+  - id: module.in_git
+    kind: rule
+    next: "commit the module's file, then add it again (bitt module add records the commit; the module itself never changes)"
+    summary: the module's exact code is committed in git (a member of its line with the same code names a commit); built-ins pass
+    in: {min: {module: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
