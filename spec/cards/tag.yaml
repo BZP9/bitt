@@ -1,0 +1,91 @@
+# tag — what the workflow says about a version (foundation.md §C2, words.md W14). A tag points at the unchanged thing: a module or
+# wrap, an artifact, a dataset or an evalset. Tags are not exclusive; within one kind: a version is set once, an alias points at one
+# target at a time (the newest wins), trust has one current value per task. Draft = no version tag. Verdicts are validations
+# (control.validate); problem marks are the guards' flags and warnings (+ control.ack).
+tool: tag
+cards:
+
+  - id: tag.make
+    kind: maneuver
+    open_in: [GOAL, JUDGE, ACT, EXPLORE]
+    extends: base.write
+    summary: >-
+      version: the next version on the target's line, major or minor computed against the previous version tag (a module's or an
+      artifact's contract, a dataset's members and test side); the first is 1.0 (bump first on a module or an artifact; a major on
+      a dataset or an evalset); a major is a person's. alias: a movable name on a
+      versioned target (`@live` is a person's). trust: trusted (a person, on a measured agreement, in this task) or hint (a demote).
+      deprecated: new recipes over it are warned.
+    in:
+      min:
+        target: {ref: [module, artifact, dataset, evalset]}
+        tag: {type: enum, values: [version, alias, trust, deprecated]}
+      opt:
+        value: {type: text}                     # alias: its name · trust: trusted / hint · deprecated: why
+        because: {ref: [finding, decision, validation], many: true, required_when: "tag in [version, trust, deprecated]"}
+        agreement: {ref: [run]}                 # trust trusted: the run measuring this module's verdicts against people's
+    out:
+      min:
+        tagged: {ref_out: tag}
+        bump: {type: text}                      # first / major / minor for a version; - otherwise
+    requires:
+      - {rule: tag.once, subject: target, on_fail: refuse}
+      - {rule: tag.alias_on_version, subject: target, when: "tag == alias", on_fail: refuse}
+      - {rule: module.in_git, subject: target, when: "tag in [version, trust]", on_fail: refuse}
+      - {rule: tag.upstream_tagged, subject: target, when: "tag == version", on_fail: refuse}
+      - {rule: tag.agreement_about, subject: target, when: "tag == trust and value == trusted", on_fail: refuse}
+      - {rule: tag.deterministic, subject: target, when: "tag == trust and value == trusted", on_fail: refuse}
+      - {rule: tag.evidence_versioned, subject: target, when: "tag in [version, trust]", on_fail: refuse}
+      # a person's, after the mechanical checks pass: a major, a protected alias, any trust
+      - {rule: control.approval, subject: target, when: "bump == major", on_fail: refuse}
+      - {rule: control.approval, subject: target, when: "value in protected", on_fail: refuse}
+      - {rule: control.approval, subject: target, when: "tag == trust", on_fail: refuse}
+
+  - id: tag.once
+    kind: rule
+    next: "a version is set once: tag the next version (a new member of the line), or give an alias / trust instead"
+    summary: a version tag is set once per target; trust is for a check module or wrap, trusted or hint; an alias and a trust name a value
+    reads: before
+    in: {min: {target: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: tag.alias_on_version
+    kind: rule
+    next: "tag a version first (bitt tag <target> --version), then move the alias onto it"
+    summary: an alias is a name (letters first, never a version, not reserved) on a target that has a version tag
+    in: {min: {target: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: tag.evidence_versioned
+    kind: rule
+    next: "version the dataset / evalset the evidence was measured on (bitt tag <it> --version; a first one is a person's), measure again on <line>@<version>, then cite that"
+    summary: a version or a trust is a claim; every dataset or evalset its evidence (because, agreement) was measured on is a version, never a raw import or a selection
+    in: {min: {target: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: tag.upstream_tagged
+    kind: rule
+    next: "tag the data it was built from first (the dataset / evalset upstream: bitt tag <it> --version), then this"
+    summary: every dataset or evalset upstream of the target (what its rows were made from, what a model was trained on) has a version tag
+    in: {min: {target: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: tag.agreement_about
+    kind: rule
+    next: "measure the agreement with THIS module (or wrap): an agreement run over its verdicts and people's labels"
+    summary: >-
+      the agreement cited for trusting it was measured with this exact module or wrap (an agreement about another configuration proves
+      nothing about it), and every model upstream of it is traced
+    in: {min: {target: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: tag.deterministic
+    kind: rule
+    next: "a trusted check is mechanical: fix what makes it differ run to run (a clock, randomness, the network), then promote it"
+    summary: a trusted check is a check (not a generate) and gives the same verdicts when run twice on what it last judged
+    in: {min: {target: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}

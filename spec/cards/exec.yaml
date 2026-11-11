@@ -1,0 +1,44 @@
+# exec — place jobs in named envs, keep them alive, bring results home. docs/v2/kernel.md §8, src/bitt/tools/bitt_run.py.
+tool: exec
+cards:
+
+  - id: exec.job.submit
+    kind: internal
+    summary: called only by other cards; the calling maneuver's event is its upstream
+    in:
+      min:
+        caller_event: {ref: [event]}
+        needs: {type: json}
+    out:
+      min:
+        job: {ref_out: job}
+
+  - id: exec.job.finish
+    kind: internal
+    summary: >-
+      Exec reports a job (actor `system`). Refused if the job already finished. `done` → the caller's finish handler writes its deferred
+      outputs and the caller card's `deferred` requires run on them; a failed requirement re-issues the finish as `rejected`.
+    in:
+      min:
+        job: {ref: [job]}
+        outputs: {type: refs}
+      opt:
+        status: {type: enum, values: [done, failed, rejected]}
+        reason: {type: text}
+    out:
+      min:
+        event: {ref_out: event}
+
+  - id: exec.job.sync
+    kind: maneuver
+    extends: base.root
+    summary: >-
+      ask a job's env how it is doing; a job that ended is finished (exec.job.finish, actor system) with what it made. Exec's own
+      bookkeeping, not intent: no `in`, so a job lands even after its cycle stopped (docs/v2/kernel.md §8)
+    in:
+      min:
+        job: {ref: [job]}
+    out:
+      min:
+        job_status: {ref_out: job_status}
+    calls: [exec.job.finish]

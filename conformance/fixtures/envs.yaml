@@ -1,0 +1,7 @@
+# The replays' machines (conformance/backend.py points BITT_ENVS here): each a real local env under the name the scenario uses, so
+# train jobs really run (in the background, on this machine). public_only takes nothing above public (train.sensitivity).
+local: {type: local, max_sensitivity: company}
+colab: {type: local, max_sensitivity: company}
+gpubox: {type: local, max_sensitivity: company, tasks: "$BITT_TASKS/gpubox"}   # its own task folders: a second machine
+mac: {type: local, max_sensitivity: company}
+public_only: {type: local, max_sensitivity: public}

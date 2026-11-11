@@ -1,0 +1,54 @@
+# Publish each release to the public repo (owner 11-06): a pushed v* tag → the memory test suite, the private-data check, then a
+# one-commit snapshot of that tag force-pushed to github.com/BZP9/bitt (main + the same tag), by scripts/publish_public.sh.
+# Runs only in the private repo (the snapshot carries this file to the public one, where it does nothing).
+# Secrets (on BZP9/bitt-private): PUBLIC_DEPLOY_KEY (an SSH key with write access to BZP9/bitt only), PRIVATE_WORDS (the owner's
+# private word list, one regex per line: never in the repo). Manual run: Actions → publish → Run workflow, with the tag.
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "the tag to publish (e.g. v2.0)"
+        required: true
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'BZP9/bitt-private'
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      BITT_NO_SKILL_SYNC: "1"
+      UV_FROZEN: "1"                     # never rewrite uv.lock: the tree must stay clean
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: astral-sh/setup-uv@v5
+      - name: tests (memory)
+        run: uv run -q pytest -q -p no:cacheprovider
+      - name: publish the snapshot
+        env:
+          PRIVATE_WORDS: ${{ secrets.PRIVATE_WORDS }}
+          DEPLOY_KEY: ${{ secrets.PUBLIC_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$PRIVATE_WORDS" > "$RUNNER_TEMP/private_words.txt"
+          printf '%s\n' "$DEPLOY_KEY" > "$RUNNER_TEMP/deploy_key"
+          export BITT_PRIVATE_WORDS="$RUNNER_TEMP/private_words.txt"
+          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch -q origin main:refs/remotes/origin/main
+          BITT_PUBLISH_REF="$TAG" BITT_PUBLIC_REMOTE="git@github.com:BZP9/bitt.git" scripts/publish_public.sh
+      - name: clean up
+        if: always()
+        run: rm -f "$RUNNER_TEMP/private_words.txt" "$RUNNER_TEMP/deploy_key"

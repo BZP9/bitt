@@ -1,0 +1,29 @@
+# Record — the only stateful part. Nothing calls put directly; every maneuver's out lands here.
+tool: record
+cards:
+
+  - id: record.put
+    kind: internal
+    summary: store a node with its parent links; refused without a parent unless the writing card is a root
+    in:
+      min:
+        kind: {type: text}
+        payload_hash: {type: hash}
+        links: {type: links, min: 1, unless: root}
+        stamp: {type: stamp}
+    out:
+      min:
+        node: {type: id}
+
+  - id: record.resolve
+    kind: rule
+    next: "name an existing node: bitt names <task> lists names; a hash prefix needs at least 8 characters"
+    summary: the DB check — a ref (hash or alias) exists and resolves to one hash; aliases are stored "via alias"
+    in:
+      min:
+        ref: {type: ref}
+    out:
+      min:
+        hash: {type: hash}
+        via_alias: {type: text, nullable: true}
+    cache: never                     # aliases move; resolve at call time

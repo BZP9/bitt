@@ -1,0 +1,15 @@
+# A test-only act (tests/notecard.py): the smallest maneuver, a note with its text, for tests of the kernel's own mechanics.
+tool: control
+cards:
+  - id: control.test_note
+    kind: maneuver
+    extends: base.write
+    summary: a note (a test-only act)
+    in:
+      min:
+        text: {type: text}
+      opt:
+        because: {ref: [finding], many: true}
+    out:
+      min:
+        note: {ref_out: note}

@@ -1,0 +1,116 @@
+# artifact — content used whole (foundation.md §B): a prompt, a model file, a rubric, examples, a config. On the shelf like modules.
+tool: artifact
+cards:
+
+  - id: artifact.add
+    kind: maneuver
+    extends: base.root
+    summary: >-
+      add an artifact (or its next version) to the shelf: its content (kept by hash), its kind, and its contract needs → gives (a
+      prompt: its slots → its fields; plain content has none). `does` is the file's (`"bitt": {"does": …}`), else given here.
+    in:
+      min:
+        content: {type: bytes}
+        artifact_kind: {type: text, pattern: "[a-z][a-z0-9_]*"}   # prompt · model · rubric · examples · config · … (an open list)
+        name: {type: name}
+        in: {ref: [cycle, goal], as: origin}
+      opt:
+        does: {type: text}
+        parent: {ref: [artifact]}
+        source: {type: json}             # {path, repo, commit}: where the file is
+    out:
+      min:
+        artifact: {ref_out: artifact}
+    requires:
+      - {rule: artifact.parses, subject: artifact, on_fail: refuse}
+      - {rule: module.line_free, subject: artifact, on_fail: refuse}
+
+  - id: artifact.parses
+    kind: rule
+    next: "fix the file: a prompt is {\"bitt\": {\"does\": …}, \"gives\": {…}, \"messages\": […]}; other content needs --does"
+    summary: the content still hashes to its node, a prompt parses (its needs and gives), and the artifact says what it is for
+    in: {min: {artifact: {ref: [artifact]}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+
+  # A model a train wrote (run.yaml) is tracked in place: its files by path, size and sha256, and where they sit (an env and a
+  # folder there). Never copied into the store. Where it is now = where it was written + copies − removals (tools/artifact.py places).
+  - id: artifact.copy
+    kind: maneuver
+    extends: base.write
+    summary: >-
+      bring a model's files to another env (its task folders, the same folder below them), hash them there, and record the copy only
+      when every file matches the model's
+    in:
+      min:
+        target: {ref: [artifact]}
+        to: {type: text}                     # an env (envs.yaml)
+    out:
+      min:
+        copy: {ref_out: copy}
+    requires:
+      - {rule: artifact.is_model, subject: target, on_fail: refuse}
+      - {rule: artifact.not_on_env, subject: target, on_fail: refuse}
+
+  - id: artifact.remove
+    kind: maneuver
+    extends: base.write
+    summary: >-
+      a person deletes a model's files in one env; the model's record stays, with the removal on it (its files cannot be restored).
+      Warned when the record holds anything made from it.
+    in:
+      min:
+        target: {ref: [artifact]}
+        env: {type: text}                    # the env whose files go
+    out:
+      min:
+        removal: {ref_out: removal}
+    requires:
+      - {rule: artifact.is_model, subject: target, on_fail: refuse}
+      - {rule: artifact.by_person, subject: target, on_fail: refuse}
+      - {rule: artifact.on_env, subject: target, on_fail: refuse}
+      - {rule: artifact.nothing_made_from, subject: target, on_fail: warn}
+
+  - id: artifact.is_model
+    kind: rule
+    next: "only a model a train wrote has files bitt tracks in place: bitt artifact list shows them"
+    summary: the target is a model a train wrote (its node holds its files and where they were written)
+    reads: before
+    in: {min: {target: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: artifact.on_env
+    kind: rule
+    next: "bitt show <model> lists where its files are; remove them there"
+    summary: the model has files on the env named (where it was written or copied, and not removed since)
+    reads: before
+    in: {min: {target: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: artifact.not_on_env
+    kind: rule
+    next: "bitt show <model> lists where its files are: copy only to an env that has none, from one that has them"
+    summary: the model has files somewhere, and none on the env it is copied to
+    reads: before
+    in: {min: {target: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: artifact.by_person
+    kind: rule
+    next: "ask the person: removing a model's files is theirs (bitt artifact rm <model> --yes, at their terminal)"
+    summary: the call is a person's (actor usr)
+    reads: before
+    in: {min: {target: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
+
+  - id: artifact.nothing_made_from
+    kind: rule
+    next: "the things made from it stay recorded; only rerunning them needs the files"
+    summary: nothing in the record was made from the model (a run that used it, a model trained on top of it, an endpoint serving it)
+    reads: before
+    in: {min: {target: {type: ref}}}
+    out: {min: {ruling: {ref_out: ruling}}}
+    cache: never
